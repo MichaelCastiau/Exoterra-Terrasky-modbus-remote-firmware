@@ -75,6 +75,7 @@ static void MX_TIM17_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
+void processState(AppState state);
 void enterLearningState();
 void enterCyclingState();
 
