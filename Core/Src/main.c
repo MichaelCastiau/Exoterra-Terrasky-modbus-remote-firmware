@@ -54,7 +54,8 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-AppState state = { .mode = CYCLING, .timeOfDay = DAY };
+AppState state = { .mode = CYCLING, .timeOfDay = DAY, .dayFrame = { },
+		.nightFrame = { }, .twilightFrame = { } };
 NEC nec;
 uint32_t period_SW_SHUFFLE = 0;
 uint32_t period_SW_LEARN = 0;
@@ -74,14 +75,35 @@ static void MX_TIM17_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
+void enterLearningState();
+void enterCyclingState();
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
 void myNecDecodedCallback(uint16_t address, uint8_t cmd) {
-	char buff[100];
-	NEC_Read(&nec);
+	if (state.mode != LEARNING)
+		return;
+
+	switch (state.timeOfDay) {
+	case DAY:
+		state.dayFrame.address = address;
+		state.dayFrame.command = cmd;
+		break;
+	case NIGHT:
+		state.nightFrame.address = address;
+		state.nightFrame.command = cmd;
+		break;
+	case TWILIGHT:
+		state.twilightFrame.address = address;
+		state.twilightFrame.command = cmd;
+		break;
+	}
+
+	return enterCyclingState();
+
 }
 
 void myNecErrorCallback() {
@@ -92,11 +114,24 @@ void myNecRepeatCallback() {
 	NEC_Read(&nec);
 }
 
-static uint32_t count = 0;
-
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 	if (htim == &htim3) {
 		NEC_TIM_IC_CaptureCallback(&nec);
+	}
+}
+
+void enterLearningState() {
+	state.mode = LEARNING;
+	HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_SET);
+
+	NEC_Read(&nec);
+}
+void enterCyclingState() {
+	if (state.mode != CYCLING) {
+		state.mode = CYCLING;
+		HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_RESET);
+		NEC_Stop(&nec);
+		return processState(state);
 	}
 }
 
@@ -154,7 +189,6 @@ int main(void) {
 
 	/* USER CODE BEGIN SysInit */
 
-	//TODO don't forget to initialize the DMA first here! This is a bug in CUBE
 	/* USER CODE END SysInit */
 
 	/* Initialize all configured peripherals */
@@ -183,8 +217,6 @@ int main(void) {
 	nec.NEC_RepeatCallback = myNecRepeatCallback;
 
 	initialize();
-
-	NEC_Read(&nec);
 
 	/* USER CODE END 2 */
 
@@ -379,7 +411,7 @@ static void MX_TIM14_Init(void) {
 
 	/* USER CODE END TIM14_Init 1 */
 	htim14.Instance = TIM14;
-	htim14.Init.Prescaler = 16000;
+	htim14.Init.Prescaler = 48000;
 	htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
 	htim14.Init.Period = 500;
 	htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -574,7 +606,7 @@ static void MX_GPIO_Init(void) {
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOA,
-			LED_LEARN_Pin | LED_DAY_Pin | LED_NIGHT_Pin | LED_TWILIGHT_Pin,
+	LED_LEARN_Pin | LED_DAY_Pin | LED_NIGHT_Pin | LED_TWILIGHT_Pin,
 			GPIO_PIN_RESET);
 
 	/*Configure GPIO pin : SW_SHUFFLE_Pin */
@@ -625,13 +657,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			if (elapsed < 10)
 				return;
 
-			if (state.mode != CYCLING) {
-				state.mode = CYCLING;
-				HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin,
-						GPIO_PIN_RESET);
-				return processState(state);
-			}
-
+			enterCyclingState();
 			switch (state.timeOfDay) {
 			case DAY:
 				state.timeOfDay = NIGHT;
@@ -645,6 +671,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			}
 
 			processState(state);
+
 		}
 		break;
 	case SW_LEARN_Pin:
@@ -656,13 +683,17 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			if (elapsed < 10)
 				return;
 
-			state.mode = LEARNING;
-			HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_SET);
+			enterLearningState();
 		}
 		break;
 	}
 }
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if (htim == &htim14 && state.mode == LEARNING) {
+		HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
+	}
+}
 /* USER CODE END 4 */
 
 /**

@@ -39,6 +39,11 @@ typedef struct {
     void (*NEC_RepeatCallback)();
 } NEC;
 
+typedef struct {
+	uint16_t address;
+	uint16_t command;
+} NEC_Frame;
+
 void NEC_Init(NEC* handle);
 
 void NEC_DeInit(NEC* handle);
@@ -46,5 +51,7 @@ void NEC_DeInit(NEC* handle);
 void NEC_TIM_IC_CaptureCallback(NEC* handle);
 
 void NEC_Read(NEC* handle);
+
+void NEC_Stop(NEC* handle);
 
 #endif /* INC_NEC_DECODE_H_ */

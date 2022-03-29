@@ -2,11 +2,14 @@ typedef enum ir_mode {
 	CYCLING = 0, LEARNING = 1
 } IRMode;
 
-typedef enum time_of_day {
+typedef enum {
 	DAY, NIGHT, TWILIGHT
 } TimeOfDay;
 
-typedef struct app_state {
+typedef struct {
 	IRMode mode;
 	TimeOfDay timeOfDay;
+	NEC_Frame dayFrame;
+	NEC_Frame nightFrame;
+	NEC_Frame twilightFrame;
 } AppState;
