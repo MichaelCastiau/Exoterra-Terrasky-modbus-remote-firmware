@@ -24,6 +24,7 @@
 
 #include "NEC_Decode/nec_decode.h"
 #include "IR_mode.h"
+#include "nec_encode.h"
 
 /* USER CODE END Includes */
 
@@ -49,6 +50,7 @@ TIM_HandleTypeDef htim14;
 TIM_HandleTypeDef htim16;
 TIM_HandleTypeDef htim17;
 DMA_HandleTypeDef hdma_tim3_ch1_trig;
+DMA_HandleTypeDef hdma_tim16_ch1_up;
 
 UART_HandleTypeDef huart1;
 
@@ -84,7 +86,7 @@ void enterCyclingState();
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-void myNecDecodedCallback(uint16_t address, uint8_t cmd) {
+void NecDecodedCallback(uint16_t address, uint8_t cmd) {
 	if (state.mode != LEARNING)
 		return;
 
@@ -107,11 +109,11 @@ void myNecDecodedCallback(uint16_t address, uint8_t cmd) {
 
 }
 
-void myNecErrorCallback() {
+void NecErrorCallback() {
 	NEC_Read(&nec);
 }
 
-void myNecRepeatCallback() {
+void NecRepeatCallback() {
 	NEC_Read(&nec);
 }
 
@@ -145,14 +147,68 @@ void processState(AppState state) {
 	switch (state.timeOfDay) {
 	case DAY:
 		HAL_GPIO_WritePin(LED_DAY_GPIO_Port, LED_DAY_Pin, GPIO_PIN_SET);
+		NEC_Send(&htim16, state.dayFrame.address, state.dayFrame.command);
 		break;
 	case NIGHT:
 		HAL_GPIO_WritePin(LED_NIGHT_GPIO_Port, LED_NIGHT_Pin, GPIO_PIN_SET);
+		NEC_Send(&htim16, state.nightFrame.address, state.nightFrame.command);
 		break;
 	case TWILIGHT:
 		HAL_GPIO_WritePin(LED_TWILIGHT_GPIO_Port, LED_TWILIGHT_Pin,
 				GPIO_PIN_SET);
+		NEC_Send(&htim16, state.twilightFrame.address,
+				state.twilightFrame.command);
 		break;
+	}
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+
+	switch (GPIO_Pin) {
+	case SW_SHUFFLE_Pin:
+		if (HAL_GPIO_ReadPin(SW_SHUFFLE_GPIO_Port, SW_SHUFFLE_Pin)
+				== GPIO_PIN_SET) {
+			period_SW_SHUFFLE = HAL_GetTick();
+		} else {
+			uint32_t elapsed = period_SW_SHUFFLE - HAL_GetTick();
+			if (elapsed < 10)
+				return;
+
+			enterCyclingState();
+			switch (state.timeOfDay) {
+			case DAY:
+				state.timeOfDay = NIGHT;
+				break;
+			case NIGHT:
+				state.timeOfDay = TWILIGHT;
+				break;
+			case TWILIGHT:
+				state.timeOfDay = DAY;
+				break;
+			}
+
+			processState(state);
+
+		}
+		break;
+	case SW_LEARN_Pin:
+		if (HAL_GPIO_ReadPin(SW_LEARN_GPIO_Port, SW_LEARN_Pin)
+				== GPIO_PIN_SET) {
+			period_SW_LEARN = HAL_GetTick();
+		} else {
+			uint32_t elapsed = period_SW_LEARN - HAL_GetTick();
+			if (elapsed < 10)
+				return;
+
+			enterLearningState();
+		}
+		break;
+	}
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if (htim == &htim14 && state.mode == LEARNING) {
+		HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
 	}
 }
 
@@ -213,9 +269,12 @@ int main(void) {
 	nec.timingAgcBoundary = 400;
 	nec.type = NEC_NOT_EXTENDED;
 
-	nec.NEC_DecodedCallback = myNecDecodedCallback;
-	nec.NEC_ErrorCallback = myNecErrorCallback;
-	nec.NEC_RepeatCallback = myNecRepeatCallback;
+	nec.NEC_DecodedCallback = NecDecodedCallback;
+	nec.NEC_ErrorCallback = NecErrorCallback;
+	nec.NEC_RepeatCallback = NecRepeatCallback;
+
+	//Start the PWM timer for the IR LED
+	HAL_TIM_PWM_Start(&htim17, TIM_CHANNEL_1);
 
 	initialize();
 
@@ -446,26 +505,26 @@ static void MX_TIM16_Init(void) {
 
 	/* USER CODE END TIM16_Init 1 */
 	htim16.Instance = TIM16;
-	htim16.Init.Prescaler = 0;
+	htim16.Init.Prescaler = 95;
 	htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-	htim16.Init.Period = 65535;
+	htim16.Init.Period = 0xffff;
 	htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
 	htim16.Init.RepetitionCounter = 0;
 	htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 	if (HAL_TIM_Base_Init(&htim16) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_TIM_PWM_Init(&htim16) != HAL_OK) {
+	if (HAL_TIM_OC_Init(&htim16) != HAL_OK) {
 		Error_Handler();
 	}
-	sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
 	sConfigOC.Pulse = 0;
 	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
 	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
 	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
 	sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
 	sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-	if (HAL_TIM_PWM_ConfigChannel(&htim16, &sConfigOC, TIM_CHANNEL_1)
+	if (HAL_TIM_OC_ConfigChannel(&htim16, &sConfigOC, TIM_CHANNEL_1)
 			!= HAL_OK) {
 		Error_Handler();
 	}
@@ -483,6 +542,7 @@ static void MX_TIM16_Init(void) {
 	/* USER CODE BEGIN TIM16_Init 2 */
 
 	/* USER CODE END TIM16_Init 2 */
+	HAL_TIM_MspPostInit(&htim16);
 
 }
 
@@ -504,26 +564,26 @@ static void MX_TIM17_Init(void) {
 
 	/* USER CODE END TIM17_Init 1 */
 	htim17.Instance = TIM17;
-	htim17.Init.Prescaler = 0;
+	htim17.Init.Prescaler = 9;
 	htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
-	htim17.Init.Period = 65535;
+	htim17.Init.Period = 125;
 	htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
 	htim17.Init.RepetitionCounter = 0;
 	htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 	if (HAL_TIM_Base_Init(&htim17) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_TIM_OC_Init(&htim17) != HAL_OK) {
+	if (HAL_TIM_PWM_Init(&htim17) != HAL_OK) {
 		Error_Handler();
 	}
-	sConfigOC.OCMode = TIM_OCMODE_TIMING;
-	sConfigOC.Pulse = 0;
+	sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	sConfigOC.Pulse = 31;
 	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
 	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
 	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
 	sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
 	sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-	if (HAL_TIM_OC_ConfigChannel(&htim17, &sConfigOC, TIM_CHANNEL_1)
+	if (HAL_TIM_PWM_ConfigChannel(&htim17, &sConfigOC, TIM_CHANNEL_1)
 			!= HAL_OK) {
 		Error_Handler();
 	}
@@ -541,6 +601,7 @@ static void MX_TIM17_Init(void) {
 	/* USER CODE BEGIN TIM17_Init 2 */
 
 	/* USER CODE END TIM17_Init 2 */
+	HAL_TIM_MspPostInit(&htim17);
 
 }
 
@@ -586,8 +647,11 @@ static void MX_DMA_Init(void) {
 	__HAL_RCC_DMA1_CLK_ENABLE();
 
 	/* DMA interrupt init */
+	/* DMA1_Channel2_3_IRQn interrupt configuration */
+	HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 1, 0);
+	HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
 	/* DMA1_Channel4_5_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel4_5_IRQn, 0, 0);
+	HAL_NVIC_SetPriority(DMA1_Channel4_5_IRQn, 1, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Channel4_5_IRQn);
 
 }
@@ -639,62 +703,13 @@ static void MX_GPIO_Init(void) {
 	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 	/* EXTI interrupt init*/
-	HAL_NVIC_SetPriority(EXTI4_15_IRQn, 1, 0);
+	HAL_NVIC_SetPriority(EXTI4_15_IRQn, 0, 0);
 	HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 
 }
 
 /* USER CODE BEGIN 4 */
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-
-	switch (GPIO_Pin) {
-	case SW_SHUFFLE_Pin:
-		if (HAL_GPIO_ReadPin(SW_SHUFFLE_GPIO_Port, SW_SHUFFLE_Pin)
-				== GPIO_PIN_SET) {
-			period_SW_SHUFFLE = HAL_GetTick();
-		} else {
-			uint32_t elapsed = period_SW_SHUFFLE - HAL_GetTick();
-			if (elapsed < 10)
-				return;
-
-			enterCyclingState();
-			switch (state.timeOfDay) {
-			case DAY:
-				state.timeOfDay = NIGHT;
-				break;
-			case NIGHT:
-				state.timeOfDay = TWILIGHT;
-				break;
-			case TWILIGHT:
-				state.timeOfDay = DAY;
-				break;
-			}
-
-			processState(state);
-
-		}
-		break;
-	case SW_LEARN_Pin:
-		if (HAL_GPIO_ReadPin(SW_LEARN_GPIO_Port, SW_LEARN_Pin)
-				== GPIO_PIN_SET) {
-			period_SW_LEARN = HAL_GetTick();
-		} else {
-			uint32_t elapsed = period_SW_LEARN - HAL_GetTick();
-			if (elapsed < 10)
-				return;
-
-			enterLearningState();
-		}
-		break;
-	}
-}
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if (htim == &htim14 && state.mode == LEARNING) {
-		HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
-	}
-}
 /* USER CODE END 4 */
 
 /**
