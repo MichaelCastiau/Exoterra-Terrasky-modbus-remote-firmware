@@ -14,7 +14,9 @@ void NEC_Send(TIM_HandleTypeDef *timer, char address, char command) {
 
 	// Timer runs at 1MHz
 
-	timings[0] = 1000;
+	const uint16_t counter = timer->Instance->CNT + 100;
+
+	timings[0] = 100;
 	timings[1] = timings[0] + (9 / timerResolution); //9 ms burst
 	timings[2] = timings[1] + ((uint16_t) (((double) 4.5) / timerResolution)); // 4.5ms pauze
 
@@ -46,15 +48,16 @@ void NEC_Send(TIM_HandleTypeDef *timer, char address, char command) {
 	timings[++index] = timings[index] + (((double) 0.5625) / timerResolution); //562.5 us final burst
 	timings[++index] = timings[index] + 500;
 
-	__HAL_TIM_SET_COUNTER(timer, 0xfff);
+	__HAL_TIM_SET_COUNTER(timer, 0xfffd);
+
+	TIM_ForcedOC1Config(timer, TIM_OCMODE_FORCED_INACTIVE);
+	TIM_ForcedOC1Config(timer, TIM_TOGGLE);
+
 
 	HAL_TIM_OC_Start_DMA(timer, TIM_CHANNEL_1, (uint16_t*) timings,
 			sizeof(timings));
 
 
-
-	TIM_ForcedOC1Config(timer, TIM_OCMODE_FORCED_INACTIVE);
-	TIM_ForcedOC1Config(timer, TIM_TOGGLE);
 
 	__HAL_TIM_ENABLE_IT(timer, TIM_IT_UPDATE);
 	__HAL_TIM_ENABLE_IT(timer, TIM_IT_CC1);
