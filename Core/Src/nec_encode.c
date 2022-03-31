@@ -7,16 +7,15 @@
 #include "nec_encode.h"
 
 static int index;
+
+// Timer runs at 1MHz
+// so the resolution is 0.002 ms
 static const double timerResolution = 0.002;
 
 void NEC_Send(TIM_HandleTypeDef *timer, char address, char command) {
 	uint16_t timings[NEC_FRAME_LENGTH];
 
-	// Timer runs at 1MHz
-
-	const uint16_t counter = timer->Instance->CNT + 100;
-
-	timings[0] = 100;
+	timings[0] = 1000;	//Get the line high after 1000 ticks since last overflow
 	timings[1] = timings[0] + (9 / timerResolution); //9 ms burst
 	timings[2] = timings[1] + ((uint16_t) (((double) 4.5) / timerResolution)); // 4.5ms pauze
 
@@ -46,19 +45,26 @@ void NEC_Send(TIM_HandleTypeDef *timer, char address, char command) {
 	}
 
 	timings[++index] = timings[index] + (((double) 0.5625) / timerResolution); //562.5 us final burst
-	timings[++index] = timings[index] + 500;
+	timings[++index] = timings[index] + 500; // End
 
-	__HAL_TIM_SET_COUNTER(timer, 0xfffd);
+	/*
+	 * Reset the timer counter
+	 */
+	__HAL_TIM_SET_COUNTER(timer, 0);
 
-	TIM_ForcedOC1Config(timer, TIM_OCMODE_FORCED_INACTIVE);
-	TIM_ForcedOC1Config(timer, TIM_TOGGLE);
-
-
+	/*
+	 * The line will be pulled high as soon as we start a DMA request
+	 * We will wait for it to overflow once (pulling the line low)
+	 * For us to start sending the data.
+	 *
+	 * We don't need to 'explicitly' wait for the overflow event though
+	 * since when the timer is running, it won't stumble against our first timing
+	 * anyways.
+	 */
 	HAL_TIM_OC_Start_DMA(timer, TIM_CHANNEL_1, (uint16_t*) timings,
 			sizeof(timings));
 
-
-
+	// Enable necessary interrupts to stop the timer
 	__HAL_TIM_ENABLE_IT(timer, TIM_IT_UPDATE);
 	__HAL_TIM_ENABLE_IT(timer, TIM_IT_CC1);
 }

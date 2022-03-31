@@ -6,7 +6,6 @@
  */
 
 #include "stm32f0xx_hal.h"
-#include "timer_helpers.h"
 
 #ifndef SRC_NEC_ENCODE_H_
 #define SRC_NEC_ENCODE_H_
