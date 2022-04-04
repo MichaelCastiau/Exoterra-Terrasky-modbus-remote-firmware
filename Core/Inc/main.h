@@ -53,6 +53,9 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+void uart1_idleHandler();
+void uart1_dataHandler();
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

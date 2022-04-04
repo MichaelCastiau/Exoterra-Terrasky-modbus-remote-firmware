@@ -8,7 +8,6 @@
 #ifndef INC_NEC_DECODE_H_
 #define INC_NEC_DECODE_H_
 
-#include <stdint.h>
 #include "stm32f0xx_hal.h"
 
 typedef enum {

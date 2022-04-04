@@ -22,9 +22,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "NEC_Decode/nec_decode.h"
-#include "IR_mode.h"
+#include "nec_decode.h"
+#include "types.h"
 #include "nec_encode.h"
+#include "modbus.h"
 
 /* USER CODE END Includes */
 
@@ -35,6 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,7 +45,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
+ CRC_HandleTypeDef hcrc;
+
+RTC_HandleTypeDef hrtc;
 
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim14;
@@ -53,6 +57,8 @@ DMA_HandleTypeDef hdma_tim3_ch1_trig;
 DMA_HandleTypeDef hdma_tim16_ch1_up;
 
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -63,6 +69,7 @@ NEC nec;
 uint32_t period_SW_SHUFFLE = 0;
 uint32_t period_SW_LEARN = 0;
 char OC_count = 0;
+ModbusConfig modbus = { .slaveId = 36 };
 
 /* USER CODE END PV */
 
@@ -70,13 +77,14 @@ char OC_count = 0;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-static void MX_I2C1_Init(void);
 static void MX_IRTIM_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_TIM16_Init(void);
 static void MX_TIM17_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_CRC_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 
 void processState(AppState state);
@@ -88,6 +96,10 @@ void enterCyclingState();
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/**
+ * Callback executed when a NEC frame is successfully decoded
+ * from the IR receiver. Call NEC_Read beforehand.
+ */
 void NecDecodedCallback(uint16_t address, uint8_t cmd) {
 	if (state.mode != LEARNING)
 		return;
@@ -110,18 +122,25 @@ void NecDecodedCallback(uint16_t address, uint8_t cmd) {
 	return enterCyclingState();
 
 }
-
+/**
+ * Callback when a decoded NEC frame is invalid
+ */
 void NecErrorCallback() {
-	NEC_Read(&nec);
+	// Retry reading
+	//NEC_Read(&nec);
 }
 
 void NecRepeatCallback() {
-	NEC_Read(&nec);
+	//NEC_Read(&nec);
 }
 
+/**
+ * Callback executed when the input capture is finished (we captured x bytes)
+ */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 	if (htim == &htim3) {
-		NEC_TIM_IC_CaptureCallback(&nec);
+		// Decode captured data
+		//NEC_TIM_IC_CaptureCallback(&nec);
 	}
 }
 
@@ -129,7 +148,7 @@ void enterLearningState() {
 	state.mode = LEARNING;
 	HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_SET);
 
-	NEC_Read(&nec);
+	//NEC_Read(&nec);
 }
 void enterCyclingState() {
 	if (state.mode != CYCLING) {
@@ -169,54 +188,62 @@ void processState(AppState state) {
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
-	switch (GPIO_Pin) {
-	case SW_SHUFFLE_Pin:
-		if (HAL_GPIO_ReadPin(SW_SHUFFLE_GPIO_Port, SW_SHUFFLE_Pin)
-				== GPIO_PIN_SET) {
+	switch (GPIO_Pin)
+	case SW_SHUFFLE_Pin: {
+		if (period_SW_SHUFFLE == 0) {
 			period_SW_SHUFFLE = HAL_GetTick();
-		} else {
-			uint32_t elapsed = period_SW_SHUFFLE - HAL_GetTick();
-			if (elapsed < 10)
-				return;
-
-			enterCyclingState();
-			switch (state.timeOfDay) {
-			case DAY:
-				state.timeOfDay = NIGHT;
-				break;
-			case NIGHT:
-				state.timeOfDay = TWILIGHT;
-				break;
-			case TWILIGHT:
-				state.timeOfDay = DAY;
-				break;
-			}
-
-			processState(state);
-
 		}
+		if (HAL_GetTick() - period_SW_SHUFFLE < 250) {
+			return;
+		} else {
+			period_SW_SHUFFLE = HAL_GetTick();
+		}
+
+		enterCyclingState();
+		switch (state.timeOfDay) {
+		case DAY:
+			state.timeOfDay = NIGHT;
+			break;
+		case NIGHT:
+			state.timeOfDay = TWILIGHT;
+			break;
+		case TWILIGHT:
+			state.timeOfDay = DAY;
+			break;
+		}
+
+		processState(state);
 		break;
-	case SW_LEARN_Pin:
-		if (HAL_GPIO_ReadPin(SW_LEARN_GPIO_Port, SW_LEARN_Pin)
-				== GPIO_PIN_SET) {
-			period_SW_LEARN = HAL_GetTick();
-		} else {
-			uint32_t elapsed = period_SW_LEARN - HAL_GetTick();
-			if (elapsed < 10)
-				return;
+		case SW_LEARN_Pin:
 
-			enterLearningState();
+		if (period_SW_LEARN == 0) {
+			period_SW_LEARN = HAL_GetTick();
 		}
+
+		if (HAL_GetTick() - period_SW_LEARN < 250) {
+			return;
+		} else {
+			period_SW_LEARN = HAL_GetTick();
+		}
+
+		enterLearningState();
 		break;
 	}
 }
 
+/**
+ * Callback gets called when a timer overflows
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim == &htim14 && state.mode == LEARNING) {
 		HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
 	}
 }
 
+/**
+ * Callback gets called when the output compare is executed.
+ * This callback is executed for every byte processed by the output compare
+ */
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
 	++OC_count;
 	if (htim == &htim16 && OC_count > NEC_FRAME_LENGTH) {
@@ -226,13 +253,59 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
 	}
 }
 
-void initialize() {
-	HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED_DAY_GPIO_Port, LED_DAY_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED_NIGHT_GPIO_Port, LED_NIGHT_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED_TWILIGHT_GPIO_Port, LED_TWILIGHT_Pin, GPIO_PIN_RESET);
+uint16_t modbus_lib_read_handler(uint16_t la) { // la: logical_address
+	return 0; //We do not enable reading registers on this device, only writing
+}
 
-	processState(state);
+int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length) {
+	//HAL_UART_Transmit(&huart1, buffer, length, 1000);
+	return 0;
+}
+
+uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
+	if (registerAddress == 40001) {
+		switch (value) {
+		}
+	}
+	return 0; // success
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+
+	if (__HAL_UART_GET_FLAG(huart, UART_FLAG_IDLE)) { // Check if it is an "Idle Interrupt"
+		__HAL_UART_CLEAR_IDLEFLAG(&huart1);				// clear the interrupt
+		modbus.RxCounter++;							// increment the Rx Counter
+
+		const uint16_t start = modbus.RxBfrPos;	// Rx bytes start position (=last buffer position)
+		modbus.RxBfrPos = MODBUS_LIB_MAX_BUFFER
+				- (uint16_t) huart->hdmarx->Instance->CNDTR;// determine actual buffer position
+		uint16_t len = MODBUS_LIB_MAX_BUFFER;		// init len with max. size
+
+		if (modbus.RxRollover < 2) {
+			if (modbus.RxRollover) {						// rolled over once
+				if (modbus.RxBfrPos <= start)
+					len = modbus.RxBfrPos + MODBUS_LIB_MAX_BUFFER - start;// no bytes overwritten
+				else
+					len = MODBUS_LIB_MAX_BUFFER + 1;// bytes overwritten error
+			} else {
+				len = modbus.RxBfrPos - start;			// no bytes overwritten
+			}
+		} else {
+			len = MODBUS_LIB_MAX_BUFFER + 2;			// dual rollover error
+		}
+
+		if (len && (len <= MODBUS_LIB_MAX_BUFFER)) {
+			modbus_lib_end_of_telegram(&modbus, start, len);
+		} else {
+			// buffer overflow error:
+
+		}
+
+		modbus.RxRollover = 0;					// reset the Rollover variable
+	} else {
+		// no idle flag? --> DMA rollover occurred
+		modbus.RxRollover++;		// increment Rollover Counter
+	}
 }
 
 /* USER CODE END 0 */
@@ -266,29 +339,33 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_I2C1_Init();
   MX_IRTIM_Init();
   MX_TIM3_Init();
   MX_TIM14_Init();
   MX_TIM16_Init();
   MX_TIM17_Init();
   MX_USART1_UART_Init();
+  MX_CRC_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
 
-	nec.timerHandle = &htim3;
+	/*nec.timerHandle = &htim3;
 
-	nec.timerChannel = TIM_CHANNEL_1;
-	nec.timerChannelActive = HAL_TIM_ACTIVE_CHANNEL_1;
+	 nec.timerChannel = TIM_CHANNEL_1;
+	 nec.timerChannelActive = HAL_TIM_ACTIVE_CHANNEL_1;
 
-	nec.timingBitBoundary = 134;
-	nec.timingAgcBoundary = 400;
-	nec.type = NEC_NOT_EXTENDED;
+	 nec.timingBitBoundary = 134;
+	 nec.timingAgcBoundary = 400;
+	 nec.type = NEC_NOT_EXTENDED;
 
-	nec.NEC_DecodedCallback = NecDecodedCallback;
-	nec.NEC_ErrorCallback = NecErrorCallback;
-	nec.NEC_RepeatCallback = NecRepeatCallback;
+	 nec.NEC_DecodedCallback = NecDecodedCallback;
+	 nec.NEC_ErrorCallback = NecErrorCallback;
+	 nec.NEC_RepeatCallback = NecRepeatCallback;
 
-	initialize();
+	 NEC_Init(&nec);
+	 */
+
+	processState(state);
 
   /* USER CODE END 2 */
 
@@ -315,9 +392,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL12;
@@ -326,6 +404,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
@@ -338,9 +417,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_I2C1;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_RTC;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_HSI;
-  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
+  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -348,48 +427,32 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief I2C1 Initialization Function
+  * @brief CRC Initialization Function
   * @param None
   * @retval None
   */
-static void MX_I2C1_Init(void)
+static void MX_CRC_Init(void)
 {
 
-  /* USER CODE BEGIN I2C1_Init 0 */
+  /* USER CODE BEGIN CRC_Init 0 */
 
-  /* USER CODE END I2C1_Init 0 */
+  /* USER CODE END CRC_Init 0 */
 
-  /* USER CODE BEGIN I2C1_Init 1 */
+  /* USER CODE BEGIN CRC_Init 1 */
 
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x2000090E;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  /* USER CODE END CRC_Init 1 */
+  hcrc.Instance = CRC;
+  hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_ENABLE;
+  hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_NONE;
+  hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_DISABLE;
+  hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_BYTES;
+  if (HAL_CRC_Init(&hcrc) != HAL_OK)
   {
     Error_Handler();
   }
-  /** Configure Analogue filter
-  */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure Digital filter
-  */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2C1_Init 2 */
+  /* USER CODE BEGIN CRC_Init 2 */
 
-  /* USER CODE END I2C1_Init 2 */
+  /* USER CODE END CRC_Init 2 */
 
 }
 
@@ -411,6 +474,41 @@ static void MX_IRTIM_Init(void)
   /* USER CODE BEGIN IRTIM_Init 2 */
 
   /* USER CODE END IRTIM_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -613,7 +711,7 @@ static void MX_TIM17_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 31;
+  sConfigOC.Pulse = 62;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -656,7 +754,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 38400;
+  huart1.Init.BaudRate = 4800;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -664,12 +762,16 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart1.Init.OverSampling = UART_OVERSAMPLING_16;
   huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_TXINVERT_INIT;
+  huart1.AdvancedInit.TxPinLevelInvert = UART_ADVFEATURE_TXINV_ENABLE;
   if (HAL_RS485Ex_Init(&huart1, UART_DE_POLARITY_HIGH, 0, 0) != HAL_OK)
   {
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
+
+	__HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);  // enable idle line detection
+	HAL_UART_Receive_DMA(&huart1, &modbus.RxBuffer[0], MODBUS_LIB_MAX_BUFFER);
 
   /* USER CODE END USART1_Init 2 */
 
@@ -713,13 +815,13 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : SW_SHUFFLE_Pin */
   GPIO_InitStruct.Pin = SW_SHUFFLE_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(SW_SHUFFLE_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SW_LEARN_Pin */
   GPIO_InitStruct.Pin = SW_LEARN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(SW_LEARN_GPIO_Port, &GPIO_InitStruct);
 
@@ -778,4 +880,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-

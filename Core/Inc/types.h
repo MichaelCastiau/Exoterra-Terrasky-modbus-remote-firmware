@@ -1,3 +1,6 @@
+#ifndef __TYPES_H__
+#define __TYPES_H__
+
 typedef enum ir_mode {
 	CYCLING = 0, LEARNING = 1
 } IRMode;
@@ -13,3 +16,6 @@ typedef struct {
 	NEC_Frame nightFrame;
 	NEC_Frame twilightFrame;
 } AppState;
+
+
+#endif
