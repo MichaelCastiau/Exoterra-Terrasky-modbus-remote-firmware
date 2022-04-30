@@ -90,7 +90,7 @@ typedef struct {
 	uint8_t RxCounter;
 	uint16_t RxBfrPos;
 	uint8_t TxCounter;
-	uint8_t RxBuffer[MODBUS_LIB_MAX_BUFFER];
+	volatile uint8_t RxBuffer[MODBUS_LIB_MAX_BUFFER];
 	uint16_t start;
 	uint16_t length;
 } ModbusConfig;

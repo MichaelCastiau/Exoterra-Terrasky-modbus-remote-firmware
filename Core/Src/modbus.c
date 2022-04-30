@@ -25,15 +25,15 @@ void modbus_lib_end_of_telegram(ModbusConfig *config) {
 	const uint16_t length = config->length;
 
 	// Check CRC
-	const uint16_t crc = HAL_CRC_Calculate(&hcrc,
-			(uint8_t*) &config->RxBuffer[config->start], config->length);
-	const uint16_t actual = (config->RxBuffer[start + length - 2] << 8)
-			| (config->RxBuffer[start + length - 1]);
+	/*const uint16_t crc = HAL_CRC_Calculate(&hcrc,
+	 (uint8_t*) &config->RxBuffer[config->start], config->length);
+	 const uint16_t actual = (config->RxBuffer[start + length - 2] << 8)
+	 | (config->RxBuffer[start + length - 1]);
 
-	if (crc != actual) {
-		//Oops, crc didn't match
-		modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
-	}
+	 if (crc != actual) {
+	 //Oops, crc didn't match
+	 modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
+	 }*/
 
 	/*  CRC_t expected = usMBCRC16(g_modbus_lib_received_telegram, g_modbus_lib_received_length-2);
 	 UCHAR got_low = g_modbus_lib_received_telegram[g_modbus_lib_received_length-2];
@@ -44,7 +44,8 @@ void modbus_lib_end_of_telegram(ModbusConfig *config) {
 	 }*/
 
 	// Check address
-	if (config->slaveId != config->RxBuffer[start + 0]) {
+	uint16_t address = config->RxBuffer[start];
+	if (config->slaveId != address) {
 		//modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
 		return;
 	}
