@@ -17,10 +17,24 @@
 
 #include "modbus.h"
 
-void modbus_lib_end_of_telegram(ModbusConfig *config, uint16_t start,
-		uint16_t length) {
+extern CRC_HandleTypeDef hcrc;
+
+void modbus_lib_end_of_telegram(ModbusConfig *config) {
+
+	const uint16_t start = config->start;
+	const uint16_t length = config->length;
 
 	// Check CRC
+	const uint16_t crc = HAL_CRC_Calculate(&hcrc,
+			(uint8_t*) &config->RxBuffer[config->start], config->length);
+	const uint16_t actual = (config->RxBuffer[start + length - 2] << 8)
+			| (config->RxBuffer[start + length - 1]);
+
+	if (crc != actual) {
+		//Oops, crc didn't match
+		modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
+	}
+
 	/*  CRC_t expected = usMBCRC16(g_modbus_lib_received_telegram, g_modbus_lib_received_length-2);
 	 UCHAR got_low = g_modbus_lib_received_telegram[g_modbus_lib_received_length-2];
 	 UCHAR got_high = g_modbus_lib_received_telegram[g_modbus_lib_received_length-1];
@@ -76,11 +90,30 @@ void modbus_lib_end_of_telegram(ModbusConfig *config, uint16_t start,
 		uint16_t value = (config->RxBuffer[start + 4] << 8)
 				| (config->RxBuffer[start + 5]);
 
-		modbus_lib_write_handler(address + MB_ADDRESS_HOLDING_REGISTER_OFFSET,
-				value);
+		uint8_t isSuccess = modbus_lib_write_handler(
+				address + MB_ADDRESS_HOLDING_REGISTER_OFFSET, value);
+
+		if (isSuccess) {
+			//Return the response to indicate success
+			modbus_lib_transport_write(config->RxBuffer, start, length);
+		}
 		break;
 	}
 	default:
 		return;
 	}
+}
+
+uint16_t modbus_lib_send_error(ModbusConfig *config, int error_code) {
+	if (error_code != MBUS_RESPONSE_NONE) {
+		uint8_t res[MB_EXCEPTION_LENGTH] = { config->slaveId,
+				config->RxBuffer[config->start + 1] | 0x80, error_code };
+		uint16_t crc = HAL_CRC_Calculate(&hcrc,
+				(uint8_t*) config->RxBuffer[config->start], config->length);
+		res[MB_EXCEPTION_LENGTH - 2] = (crc >> 8) & 0xff;
+		res[MB_EXCEPTION_LENGTH - 1] = (crc & 0xff);
+
+		modbus_lib_transport_write(&res[0], 0, MB_EXCEPTION_LENGTH);
+	}
+	return -1;
 }

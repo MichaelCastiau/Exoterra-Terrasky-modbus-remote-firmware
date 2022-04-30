@@ -9,6 +9,7 @@
 #define INC_MODBUS_H_
 
 #include <stdint.h>
+#include "stm32f0xx_hal.h"
 
 #define MODBUS_LIB_MAX_BUFFER 256
 
@@ -73,6 +74,8 @@
  any  particular  val ue  of  any particular register.
  */
 #define  MBUS_RESPONSE_ILLEGAL_DATA_VALUE 0x03
+
+#define MB_EXCEPTION_LENGTH 5
 /*
  An  unrecoverable  error  occurred  while  the  server
  was attempting to perform the requested action.
@@ -88,14 +91,16 @@ typedef struct {
 	uint16_t RxBfrPos;
 	uint8_t TxCounter;
 	uint8_t RxBuffer[MODBUS_LIB_MAX_BUFFER];
+	uint16_t start;
+	uint16_t length;
 } ModbusConfig;
 
-void modbus_lib_end_of_telegram(ModbusConfig *config, uint16_t start,
-		uint16_t length);
+void modbus_lib_end_of_telegram(ModbusConfig *config);
 
 int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length);
 
 uint16_t modbus_lib_read_handler(uint16_t registerAddres);
 uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value);
+uint16_t modbus_lib_send_error(ModbusConfig *config, int error_code);
 
 #endif /* INC_MODBUS_H_ */

@@ -37,6 +37,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define IR_DEBOUNCE_S 5
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,6 +72,8 @@ uint32_t period_SW_SHUFFLE = 0;
 uint32_t period_SW_LEARN = 0;
 char OC_count = 0;
 ModbusConfig modbus = { .slaveId = 36 };
+
+volatile uint32_t irDebouncer = 0;
 
 /* USER CODE END PV */
 
@@ -154,7 +158,7 @@ void enterCyclingState() {
 	if (state.mode != CYCLING) {
 		state.mode = CYCLING;
 		HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_RESET);
-		NEC_Stop(&nec);
+		//NEC_Stop(&nec);
 		return processState(state);
 	}
 }
@@ -235,9 +239,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
  * Callback gets called when a timer overflows
  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if (htim == &htim14 && state.mode == LEARNING) {
-		HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
+	if (htim == &htim14) {
+		//500ms passed
+		++irDebouncer;
+
+		if (state.mode == LEARNING) {
+			HAL_GPIO_TogglePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin);
+		}
 	}
+
 }
 
 /**
@@ -258,11 +268,22 @@ uint16_t modbus_lib_read_handler(uint16_t la) { // la: logical_address
 }
 
 int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length) {
-	//HAL_UART_Transmit(&huart1, buffer, length, 1000);
+	HAL_UART_Transmit_DMA(&huart1, buffer, length);
 	return 0;
 }
 
+/*
+ * This method gets excecuted when a 'write register' command
+ * is received from the Modbus
+ */
 uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
+
+	if (irDebouncer < (IR_DEBOUNCE_S * 2)) {	//Ignore commands every x seconds
+		return 0;
+	}
+
+	irDebouncer = 0;
+
 	if (registerAddress == 40001) {
 		switch (value) {
 		case NIGHT:
@@ -272,9 +293,10 @@ uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
 			state.timeOfDay = TWILIGHT;
 			break;
 		case DAY:
-		default:
 			state.timeOfDay = DAY;
 			break;
+		default:
+			return -1;
 		}
 
 		processState(state);
@@ -307,7 +329,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		}
 
 		if (len && (len <= MODBUS_LIB_MAX_BUFFER)) {
-			modbus_lib_end_of_telegram(&modbus, start, len);
+			modbus.start = start;
+			modbus.length = len;
+			modbus_lib_end_of_telegram(&modbus);
 		} else {
 			// buffer overflow error:
 
@@ -662,9 +686,7 @@ static void MX_TIM16_Init(void) {
 	}
 	/* USER CODE BEGIN TIM16_Init 2 */
 
-#ifdef DEBUG
 	__HAL_DBGMCU_FREEZE_TIM16();
-#endif
 
 	/* USER CODE END TIM16_Init 2 */
 
@@ -701,7 +723,7 @@ static void MX_TIM17_Init(void) {
 		Error_Handler();
 	}
 	sConfigOC.OCMode = TIM_OCMODE_PWM1;
-	sConfigOC.Pulse = 62;
+	sConfigOC.Pulse = 125 / 2;
 	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
 	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
 	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -758,7 +780,7 @@ static void MX_USART1_UART_Init(void) {
 	}
 	/* USER CODE BEGIN USART1_Init 2 */
 
-	__HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);  // enable idle line detection
+	//__HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);  // enable idle line detection
 	HAL_UART_Receive_DMA(&huart1, &modbus.RxBuffer[0], MODBUS_LIB_MAX_BUFFER);
 
 	/* USER CODE END USART1_Init 2 */
@@ -775,10 +797,10 @@ static void MX_DMA_Init(void) {
 
 	/* DMA interrupt init */
 	/* DMA1_Channel2_3_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 1, 0);
+	HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
 	/* DMA1_Channel4_5_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel4_5_IRQn, 1, 0);
+	HAL_NVIC_SetPriority(DMA1_Channel4_5_IRQn, 3, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Channel4_5_IRQn);
 
 }
