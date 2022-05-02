@@ -13,7 +13,7 @@ void NEC_TIM_IC_CaptureCallback(NEC *handle) {
 
 		HAL_TIM_IC_Stop_DMA(handle->timerHandle, handle->timerChannel);
 
-		if (handle->rawTimerData[1] < handle->timingAgcBoundary) {
+		if (handle->rawTimerData[1] < 120 ){//handle->timingAgcBoundary) {
 			handle->state = NEC_OK;
 			handle->NEC_RepeatCallback();
 		} else {

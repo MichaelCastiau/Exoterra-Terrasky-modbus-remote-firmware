@@ -6,7 +6,7 @@
  */
 #include "nec_encode.h"
 
-static int index;
+static volatile int index;
 
 // Timer runs at 1MHz
 // so the resolution is 0.002 ms

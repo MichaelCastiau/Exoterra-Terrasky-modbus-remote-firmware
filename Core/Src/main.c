@@ -22,10 +22,14 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#define EN_NEC_READ
+#define EN_MODBUS
+
 #include "nec_decode.h"
 #include "types.h"
 #include "nec_encode.h"
 #include "modbus.h"
+#include "ir_commands.h"
 
 /* USER CODE END Includes */
 
@@ -37,13 +41,13 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define IR_DEBOUNCE_S 5	//Send command every x seconds
+#define IR_DEBOUNCE_S 60	//Send command every x seconds
 #define MODBUS_SLAVE_ID 30
 #define DEFAULT_IR_ADDRESS 4
 
-#define DEFAULT_DAY_COMMAND 0x58
-#define DEFAULT_NIGHT_COMMAND 0x19
-#define DEFAULT_TWILIGHT_COMMAND 0x5C
+#define DEFAULT_DAY_COMMAND IR_WHITE_COMMAND
+#define DEFAULT_NIGHT_COMMAND IR_MOON2_COMMAND
+#define DEFAULT_TWILIGHT_COMMAND IR_RED_COMMAND
 
 /* USER CODE END PD */
 
@@ -71,8 +75,9 @@ DMA_HandleTypeDef hdma_usart1_tx;
 /* USER CODE BEGIN PV */
 
 volatile AppState state = { .mode = CYCLING, .timeOfDay = DAY, .dayFrame = {
-		.address = DEFAULT_IR_ADDRESS, .command = DEFAULT_DAY_COMMAND }, .nightFrame = { .address = 4,
-		.command = DEFAULT_NIGHT_COMMAND }, .twilightFrame = { .address = 4, .command = DEFAULT_TWILIGHT_COMMAND } };
+		.address = DEFAULT_IR_ADDRESS, .command = DEFAULT_DAY_COMMAND },
+		.nightFrame = { .address = 4, .command = DEFAULT_NIGHT_COMMAND },
+		.twilightFrame = { .address = 4, .command = DEFAULT_TWILIGHT_COMMAND } };
 NEC nec;
 uint32_t period_SW_SHUFFLE = 0;
 uint32_t period_SW_LEARN = 0;
@@ -137,11 +142,13 @@ void NecDecodedCallback(uint16_t address, uint8_t cmd) {
  */
 void NecErrorCallback() {
 	// Retry reading
-	//NEC_Read(&nec);
+#ifdef EN_NEC_READ
+	NEC_Read(&nec);
+#endif
 }
 
 void NecRepeatCallback() {
-#ifndef DEBUG
+#ifdef EN_NEC_READ
 	NEC_Read(&nec);
 #endif
 }
@@ -150,7 +157,7 @@ void NecRepeatCallback() {
  * Callback executed when the input capture is finished (we captured x bytes)
  */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-#ifndef DEBUG
+#ifdef EN_NEC_READ
 	if (htim == &htim3) {
 		// Decode captured data
 		NEC_TIM_IC_CaptureCallback(&nec);
@@ -159,8 +166,8 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 }
 
 void enterLearningState() {
-#ifndef DEBUG
 	state.mode = LEARNING;
+#ifdef EN_NEC_READ
 	HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_SET);
 
 	NEC_Read(&nec);
@@ -170,24 +177,17 @@ void enterCyclingState() {
 	if (state.mode != CYCLING) {
 		state.mode = CYCLING;
 		HAL_GPIO_WritePin(LED_LEARN_GPIO_Port, LED_LEARN_Pin, GPIO_PIN_RESET);
-#ifndef DEBUG
+#ifdef EN_NEC_READ
 		NEC_Stop(&nec);
 #endif
 		return processState(state);
 	}
 }
 
-static uint16_t timesSent = 0;
-
 void processState(AppState newState) {
-
-	//Debounce the state
-	if (newState.timeOfDay == state.timeOfDay && timesSent >= 3) {
-		return;
+	if (state.mode == CYCLING) {
+		state.timeOfDay = newState.timeOfDay;
 	}
-
-	state.timeOfDay = newState.timeOfDay;
-	++timesSent;
 
 	HAL_GPIO_WritePin(LED_DAY_GPIO_Port, LED_DAY_Pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(LED_NIGHT_GPIO_Port, LED_NIGHT_Pin, GPIO_PIN_RESET);
@@ -221,13 +221,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 		if (period_SW_SHUFFLE == 0) {
 			period_SW_SHUFFLE = HAL_GetTick();
 		}
+#ifndef DEBUG
 		if (HAL_GetTick() - period_SW_SHUFFLE < 250) {
 			return;
 		} else {
 			period_SW_SHUFFLE = HAL_GetTick();
 		}
+#endif
+
+		IRMode previousMode = state.mode;
 
 		enterCyclingState();
+
+		if (previousMode == LEARNING)
+			return;
+
 		switch (state.timeOfDay) {
 		case DAY:
 			state.timeOfDay = NIGHT;
@@ -244,6 +252,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 		break;
 		case SW_LEARN_Pin:
 
+#ifndef DEBUG
 		if (period_SW_LEARN == 0) {
 			period_SW_LEARN = HAL_GetTick();
 		}
@@ -253,6 +262,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 		} else {
 			period_SW_LEARN = HAL_GetTick();
 		}
+#endif
 
 		enterLearningState();
 		break;
@@ -292,8 +302,10 @@ uint16_t modbus_lib_read_handler(uint16_t la) { // la: logical_address
 }
 
 int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length) {
+#ifdef EN_MODBUS
 	HAL_UART_Transmit_DMA(&huart1, buffer, length);
 	return 0;
+#endif
 }
 
 /*
@@ -301,6 +313,7 @@ int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length)
  * is received from the Modbus
  */
 uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
+#ifdef EN_MODBUS
 
 	if (irDebouncer < (IR_DEBOUNCE_S * 2)) { //Ignore commands every x seconds
 		return 0;
@@ -327,9 +340,13 @@ uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
 		processState(newState);
 	}
 	return 0; // success
+
+#endif
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+
+#ifdef EN_MODBUS
 
 	if (__HAL_UART_GET_FLAG(huart, UART_FLAG_IDLE)) { // Check if it is an "Idle Interrupt"
 		__HAL_UART_CLEAR_IDLEFLAG(&huart1);				// clear the interrupt
@@ -367,6 +384,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		// no idle flag? --> DMA rollover occurred
 		modbus.RxRollover++;		// increment Rollover Counter
 	}
+
+#endif
 }
 
 /* USER CODE END 0 */
@@ -409,21 +428,20 @@ int main(void) {
 	MX_RTC_Init();
 	/* USER CODE BEGIN 2 */
 
-	/*nec.timerHandle = &htim3;
+#ifdef EN_NEC_READ
+	nec.timerHandle = &htim3;
 
-	 nec.timerChannel = TIM_CHANNEL_1;
-	 nec.timerChannelActive = HAL_TIM_ACTIVE_CHANNEL_1;
+	nec.timerChannel = TIM_CHANNEL_1;
+	nec.timerChannelActive = HAL_TIM_ACTIVE_CHANNEL_1;
 
-	 nec.timingBitBoundary = 134;
-	 nec.timingAgcBoundary = 400;
-	 nec.type = NEC_NOT_EXTENDED;
+	nec.timingBitBoundary = 134;
+	nec.timingAgcBoundary = 400;
+	nec.type = NEC_NOT_EXTENDED;
 
-	 nec.NEC_DecodedCallback = NecDecodedCallback;
-	 nec.NEC_ErrorCallback = NecErrorCallback;
-	 nec.NEC_RepeatCallback = NecRepeatCallback;
-
-	 NEC_Init(&nec);
-	 */
+	nec.NEC_DecodedCallback = NecDecodedCallback;
+	nec.NEC_ErrorCallback = NecErrorCallback;
+	nec.NEC_RepeatCallback = NecRepeatCallback;
+#endif
 
 	processState(state);
 
@@ -585,7 +603,7 @@ static void MX_TIM3_Init(void) {
 
 	/* USER CODE END TIM3_Init 1 */
 	htim3.Instance = TIM3;
-	htim3.Init.Prescaler = 599;
+	htim3.Init.Prescaler = 699;
 	htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
 	htim3.Init.Period = 0xffff;
 	htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
