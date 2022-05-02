@@ -7,6 +7,8 @@ The purpose is to automate an ExoTerra Terrasky using IR, since the default remo
 
 RS-485 Modbus RTU can be used to send commands to change the lights, using a Modbus enabled PLC.
 
+The hardware repository can be found [here](https://github.com/MichaelCastiau/Exoterra-TerraSky-modbus-remote-hardware).
+
 ## Modbus
 
 ### Register 40001
