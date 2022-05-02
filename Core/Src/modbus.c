@@ -19,7 +19,7 @@
 
 extern CRC_HandleTypeDef hcrc;
 
-void modbus_lib_end_of_telegram(ModbusConfig *config) {
+void modbus_lib_end_of_telegram(volatile ModbusConfig *config) {
 
 	const uint16_t start = config->start;
 	const uint16_t length = config->length;
@@ -105,7 +105,7 @@ void modbus_lib_end_of_telegram(ModbusConfig *config) {
 	}
 }
 
-uint16_t modbus_lib_send_error(ModbusConfig *config, int error_code) {
+uint16_t modbus_lib_send_error(volatile ModbusConfig *config, int error_code) {
 	if (error_code != MBUS_RESPONSE_NONE) {
 		uint8_t res[MB_EXCEPTION_LENGTH] = { config->slaveId,
 				config->RxBuffer[config->start + 1] | 0x80, error_code };

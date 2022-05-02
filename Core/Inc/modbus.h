@@ -95,12 +95,12 @@ typedef struct {
 	uint16_t length;
 } ModbusConfig;
 
-void modbus_lib_end_of_telegram(ModbusConfig *config);
+void modbus_lib_end_of_telegram(volatile ModbusConfig *config);
 
 int modbus_lib_transport_write(uint8_t *buffer, uint16_t start, uint16_t length);
 
 uint16_t modbus_lib_read_handler(uint16_t registerAddres);
 uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value);
-uint16_t modbus_lib_send_error(ModbusConfig *config, int error_code);
+uint16_t modbus_lib_send_error(volatile ModbusConfig *config, int error_code);
 
 #endif /* INC_MODBUS_H_ */
