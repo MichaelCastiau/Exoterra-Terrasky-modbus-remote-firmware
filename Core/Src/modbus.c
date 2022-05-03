@@ -17,49 +17,30 @@
 
 #include "modbus.h"
 
-extern CRC_HandleTypeDef hcrc;
-
 void modbus_lib_end_of_telegram(volatile ModbusConfig *config) {
-
-	const uint16_t start = config->start;
 	const uint16_t length = config->length;
 
-	// Check CRC
-	/*const uint16_t crc = HAL_CRC_Calculate(&hcrc,
-	 (uint8_t*) &config->RxBuffer[config->start], config->length);
-	 const uint16_t actual = (config->RxBuffer[start + length - 2] << 8)
-	 | (config->RxBuffer[start + length - 1]);
-
-	 if (crc != actual) {
-	 //Oops, crc didn't match
-	 modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
-	 }*/
-
-	/*  CRC_t expected = usMBCRC16(g_modbus_lib_received_telegram, g_modbus_lib_received_length-2);
-	 UCHAR got_low = g_modbus_lib_received_telegram[g_modbus_lib_received_length-2];
-	 UCHAR got_high = g_modbus_lib_received_telegram[g_modbus_lib_received_length-1];
-	 if ((expected.bytes.low != got_low) || (expected.bytes.high != got_high)){
-	 modbus_lib_send_error(MBUS_RESPONSE_NONE);
-	 return;
-	 }*/
+	uint8_t buffer[length];
+	memcpy(&buffer[0], &config->RxBuffer[config->start], length);
 
 	// Check address
-	uint16_t address = config->RxBuffer[start];
+	uint16_t address = buffer[0];
 	if (config->slaveId != address) {
-		//modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
 		return;
 	}
 
-	// Telegram is okay, call the relevant handler
-	// -------------------------------------------
-	//uint8_t outgoing_telegram[MODBUS_LIB_MAX_BUFFER];
-	//uint16_t oindex = 0;
+	const uint16_t actualCRC = (((uint16_t) buffer[length - 2]) << 8)
+			| buffer[length - 1];
 
-	//outgoing_telegram[oindex++] = config->slaveId;
+	const uint16_t computedCRC = usMBCRC16(&buffer[0], length - 2);
 
-	//volatile MbDataField start_addr, count, res, addr, value;
+	if (computedCRC != actualCRC) {
+		//Oops, crc didn't match
+		modbus_lib_send_error(config, MBUS_RESPONSE_NONE);
+		return;
+	}
 
-	switch (config->RxBuffer[start + 1]) {
+	switch (buffer[1]) {
 	case MB_FUNC_READ_HOLDING_REGISTERS:
 		/*  start_addr.bytes.high = g_modbus_lib_received_telegram[2];
 		 start_addr.bytes.low = g_modbus_lib_received_telegram[3];
@@ -86,17 +67,15 @@ void modbus_lib_end_of_telegram(volatile ModbusConfig *config) {
 		 modbus_lib_transport_write(outgoing_telegram, oindex);*/
 		break;
 	case MB_FUNC_WRITE_REGISTER: {
-		uint16_t address = (config->RxBuffer[start + 2] << 8)
-				| (config->RxBuffer[start + 3]);
-		uint16_t value = (config->RxBuffer[start + 4] << 8)
-				| (config->RxBuffer[start + 5]);
+		uint16_t address = (buffer[2] << 8) | (buffer[3]);
+		uint16_t value = (buffer[4] << 8) | (buffer[5]);
 
 		uint8_t isSuccess = modbus_lib_write_handler(
 				address + MB_ADDRESS_HOLDING_REGISTER_OFFSET, value);
 
 		if (isSuccess) {
 			//Return the response to indicate success
-			modbus_lib_transport_write(config->RxBuffer, start, length);
+			modbus_lib_transport_write(buffer, 0, length);
 		}
 		break;
 	}
@@ -109,8 +88,7 @@ uint16_t modbus_lib_send_error(volatile ModbusConfig *config, int error_code) {
 	if (error_code != MBUS_RESPONSE_NONE) {
 		uint8_t res[MB_EXCEPTION_LENGTH] = { config->slaveId,
 				config->RxBuffer[config->start + 1] | 0x80, error_code };
-		uint16_t crc = HAL_CRC_Calculate(&hcrc,
-				(uint8_t*) config->RxBuffer[config->start], config->length);
+		uint16_t crc = 0; //TODOCRC16_2(config->RxBuffer[config->start], config->length);
 		res[MB_EXCEPTION_LENGTH - 2] = (crc >> 8) & 0xff;
 		res[MB_EXCEPTION_LENGTH - 1] = (crc & 0xff);
 

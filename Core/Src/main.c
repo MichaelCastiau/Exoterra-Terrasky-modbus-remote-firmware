@@ -24,6 +24,7 @@
 
 #define EN_NEC_READ
 #define EN_MODBUS
+#define NEC_SEND
 
 #include "nec_decode.h"
 #include "types.h"
@@ -49,6 +50,11 @@
 #define DEFAULT_NIGHT_COMMAND IR_MOON2_COMMAND
 #define DEFAULT_TWILIGHT_COMMAND IR_RED_COMMAND
 
+#define R_TIMEOFDAY 40001
+#define R_DAYCODE 40002
+#define R_NIGHTCODE 40003
+#define R_TWILIGHTCODE 40004
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,7 +63,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-CRC_HandleTypeDef hcrc;
 
 RTC_HandleTypeDef hrtc;
 
@@ -98,7 +103,6 @@ static void MX_TIM14_Init(void);
 static void MX_TIM16_Init(void);
 static void MX_TIM17_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_CRC_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -321,8 +325,8 @@ uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
 
 	irDebouncer = 0;
 	AppState newState = state;
-
-	if (registerAddress == 40001) {
+	switch (registerAddress) {
+	case R_TIMEOFDAY: {
 		switch (value) {
 		case NIGHT:
 			newState.timeOfDay = NIGHT;
@@ -338,6 +342,17 @@ uint16_t modbus_lib_write_handler(uint16_t registerAddress, uint16_t value) {
 		}
 
 		processState(newState);
+		break;
+	}
+	case R_DAYCODE:
+		state.dayFrame.command = value;
+		break;
+	case R_NIGHTCODE:
+		state.nightFrame.command = value;
+		break;
+	case R_TWILIGHTCODE:
+		state.twilightFrame.command = value;
+		break;
 	}
 	return 0; // success
 
@@ -424,7 +439,6 @@ int main(void) {
 	MX_TIM16_Init();
 	MX_TIM17_Init();
 	MX_USART1_UART_Init();
-	MX_CRC_Init();
 	MX_RTC_Init();
 	/* USER CODE BEGIN 2 */
 
@@ -500,34 +514,6 @@ void SystemClock_Config(void) {
 	if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
 		Error_Handler();
 	}
-}
-
-/**
- * @brief CRC Initialization Function
- * @param None
- * @retval None
- */
-static void MX_CRC_Init(void) {
-
-	/* USER CODE BEGIN CRC_Init 0 */
-
-	/* USER CODE END CRC_Init 0 */
-
-	/* USER CODE BEGIN CRC_Init 1 */
-
-	/* USER CODE END CRC_Init 1 */
-	hcrc.Instance = CRC;
-	hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_ENABLE;
-	hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_NONE;
-	hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_DISABLE;
-	hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_BYTES;
-	if (HAL_CRC_Init(&hcrc) != HAL_OK) {
-		Error_Handler();
-	}
-	/* USER CODE BEGIN CRC_Init 2 */
-
-	/* USER CODE END CRC_Init 2 */
-
 }
 
 /**
