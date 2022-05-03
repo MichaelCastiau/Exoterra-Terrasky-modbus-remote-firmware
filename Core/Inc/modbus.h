@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include "stm32f0xx_hal.h"
+#include <memory.h>
 
 #define MODBUS_LIB_MAX_BUFFER 256
 
